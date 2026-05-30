@@ -30,9 +30,6 @@ except ImportError:
 
 IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.tiff', '.tif', '.bmp', '.gif'}
 
-# Lazy-loaded, cached OCR models
-_surya_predictor = None
-
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(title="DocDrop", version="1.0.0")
 
@@ -44,10 +41,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── OCR helpers ───────────────────────────────────────────────────────────────
+# ── PDF helpers ───────────────────────────────────────────────────────────────
 
 def pdf_needs_ocr(file_path: str, threshold: int = 100) -> bool:
-    """Fast check using pdfminer: sparse text on first 2 pages → image-based PDF."""
     try:
         from pdfminer.high_level import extract_text
         t0 = time.perf_counter()
@@ -67,7 +63,6 @@ def pdf_needs_ocr(file_path: str, threshold: int = 100) -> bool:
 
 
 def pdf_to_images(file_path: str):
-    """Convert PDF pages to PIL images (requires poppler)."""
     try:
         from pdf2image import convert_from_path
         log.info("PDF→images — converting at 200 dpi...")
@@ -87,34 +82,54 @@ def pdf_to_images(file_path: str):
         raise HTTPException(status_code=500, detail=f"PDF→image conversion failed: {msg}")
 
 
-def ocr_tesseract(images) -> str:
-    try:
-        import pytesseract
-    except ImportError:
-        raise HTTPException(
-            status_code=400,
-            detail="pytesseract not installed. Run: pip install pytesseract (also needs: brew install tesseract)"
+# ── OCR engine registry ───────────────────────────────────────────────────────
+
+class OcrEngine:
+    name: str
+
+    def is_available(self) -> bool:
+        raise NotImplementedError
+
+    def run(self, images) -> str:
+        raise NotImplementedError
+
+
+class TesseractEngine(OcrEngine):
+    name = "tesseract"
+
+    def is_available(self) -> bool:
+        try:
+            import pytesseract
+            pytesseract.get_tesseract_version()
+            return True
+        except Exception:
+            return False
+
+    def run(self, images) -> str:
+        try:
+            import pytesseract
+        except ImportError:
+            raise HTTPException(
+                status_code=400,
+                detail="pytesseract not installed. Run: pip install pytesseract (also needs: brew install tesseract)"
+            )
+        log.info("Tesseract — running on %d image(s)", len(images))
+        t0 = time.perf_counter()
+        pages = []
+        for i, img in enumerate(images, 1):
+            page_t0 = time.perf_counter()
+            text = pytesseract.image_to_string(img).strip()
+            log.info("  page %d/%d — %d chars in %.2fs", i, len(images), len(text), time.perf_counter() - page_t0)
+            if text:
+                pages.append(f"## Page {i}\n\n{text}")
+        log.info(
+            "Tesseract — done in %.2fs | %d page(s) with text, %d total chars",
+            time.perf_counter() - t0, len(pages), sum(len(p) for p in pages),
         )
-
-    log.info("Tesseract — running on %d image(s)", len(images))
-    t0 = time.perf_counter()
-    pages = []
-    for i, img in enumerate(images, 1):
-        page_t0 = time.perf_counter()
-        text = pytesseract.image_to_string(img).strip()
-        log.info("  page %d/%d — %d chars in %.2fs", i, len(images), len(text), time.perf_counter() - page_t0)
-        if text:
-            pages.append(f"## Page {i}\n\n{text}")
-
-    log.info(
-        "Tesseract — done in %.2fs | %d page(s) with text, %d total chars",
-        time.perf_counter() - t0, len(pages), sum(len(p) for p in pages),
-    )
-    return "\n\n".join(pages)
+        return "\n\n".join(pages)
 
 
 def _html_to_text(html_str: str) -> str:
-    """Convert Surya block HTML to plain text, preserving newlines at block boundaries."""
     import re
     from html import unescape
     from html.parser import HTMLParser
@@ -142,82 +157,78 @@ def _html_to_text(html_str: str) -> str:
     return unescape(text).strip()
 
 
-def ocr_surya(images) -> str:
-    global _surya_predictor
-    try:
-        from surya.recognition import RecognitionPredictor
-        from surya.inference import SuryaInferenceManager
-    except ImportError:
-        raise HTTPException(status_code=400, detail="surya-ocr not installed. Run: pip install surya-ocr")
+class SuryaEngine(OcrEngine):
+    name = "surya"
 
-    if _surya_predictor is None:
-        log.info("Surya — loading model (first use, GGUF ~1.4 GB)...")
+    def __init__(self):
+        self._predictor = None
+
+    def is_available(self) -> bool:
+        try:
+            import surya  # noqa: F401
+            return bool(shutil.which("llama-server") or shutil.which("vllm"))
+        except Exception:
+            return False
+
+    def run(self, images) -> str:
+        try:
+            from surya.recognition import RecognitionPredictor
+            from surya.inference import SuryaInferenceManager
+        except ImportError:
+            raise HTTPException(status_code=400, detail="surya-ocr not installed. Run: pip install surya-ocr")
+
+        if self._predictor is None:
+            log.info("Surya — loading model (first use, GGUF ~1.4 GB)...")
+            t0 = time.perf_counter()
+            self._predictor = RecognitionPredictor(SuryaInferenceManager())
+            log.info("Surya — model ready in %.2fs", time.perf_counter() - t0)
+        else:
+            log.info("Surya — using cached predictor")
+
+        log.info("Surya — processing %d page(s) one by one via llama-server...", len(images))
         t0 = time.perf_counter()
-        _surya_predictor = RecognitionPredictor(SuryaInferenceManager())
-        log.info("Surya — model ready in %.2fs", time.perf_counter() - t0)
-    else:
-        log.info("Surya — using cached predictor")
+        pages = []
 
-    log.info("Surya — processing %d page(s) one by one via llama-server...", len(images))
-    t0 = time.perf_counter()
-    pages = []
+        for i, img in enumerate(images, 1):
+            log.info("  page %d/%d — sending to VLM...", i, len(images))
+            page_t0 = time.perf_counter()
 
-    for i, img in enumerate(images, 1):
-        log.info("  page %d/%d — sending to VLM...", i, len(images))
-        page_t0 = time.perf_counter()
+            results = self._predictor([img], full_page=True)
+            page = results[0]
 
-        results = _surya_predictor([img], full_page=True)
-        page = results[0]
+            blocks = sorted(page.blocks, key=lambda b: b.reading_order)
+            non_skipped = [b for b in blocks if not b.skipped and not b.error and b.html]
+            lines = [ln for ln in (_html_to_text(b.html) for b in non_skipped) if ln]
+            text = "\n\n".join(lines)
 
-        blocks = sorted(page.blocks, key=lambda b: b.reading_order)
-        non_skipped = [b for b in blocks if not b.skipped and not b.error and b.html]
-        lines = [ln for ln in (_html_to_text(b.html) for b in non_skipped) if ln]
-        text = "\n\n".join(lines)
+            log.info(
+                "  page %d/%d — done in %.2fs | %d block(s), %d chars",
+                i, len(images), time.perf_counter() - page_t0, len(non_skipped), len(text),
+            )
+            if text:
+                pages.append(f"## Page {i}\n\n{text}")
 
         log.info(
-            "  page %d/%d — done in %.2fs | %d block(s), %d chars",
-            i, len(images), time.perf_counter() - page_t0, len(non_skipped), len(text),
+            "Surya — all pages done in %.2fs | %d page(s) with text, %d total chars",
+            time.perf_counter() - t0, len(pages), sum(len(p) for p in pages),
         )
-        if text:
-            pages.append(f"## Page {i}\n\n{text}")
+        return "\n\n".join(pages)
 
-    log.info(
-        "Surya — all pages done in %.2fs | %d page(s) with text, %d total chars",
-        time.perf_counter() - t0, len(pages), sum(len(p) for p in pages),
-    )
-    return "\n\n".join(pages)
+
+OCR_REGISTRY: dict[str, OcrEngine] = {e.name: e for e in [TesseractEngine(), SuryaEngine()]}
 
 
 def run_ocr(images, engine: str) -> str:
-    if engine == "tesseract":
-        return ocr_tesseract(images)
-    if engine == "surya":
-        return ocr_surya(images)
-    raise HTTPException(status_code=400, detail=f"Unknown OCR engine: {engine}")
+    if engine not in OCR_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"Unknown OCR engine: {engine}")
+    return OCR_REGISTRY[engine].run(images)
 
 
 # ── Engine availability probe ─────────────────────────────────────────────────
 
 @app.get("/api/ocr-engines")
 async def get_ocr_engines():
-    """Returns OCR engines available in this Python environment."""
-    available = []
-
-    try:
-        import pytesseract
-        pytesseract.get_tesseract_version()
-        available.append("tesseract")
-    except Exception:
-        pass
-
-    try:
-        import surya  # noqa: F401
-        import shutil
-        if shutil.which("llama-server") or shutil.which("vllm"):
-            available.append("surya")
-    except Exception:
-        pass
-
+    available = [name for name, engine in OCR_REGISTRY.items() if engine.is_available()]
     log.info("Engine probe → available: %s", available or ["none"])
     return {"engines": available}
 
