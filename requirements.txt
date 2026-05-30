@@ -1,0 +1,10 @@
+# MarkItDown Web Hub - Unified Dependencies
+# Installs the local markitdown package (with all format support) + web server
+
+# Local markitdown with all optional converters (PDF, DOCX, XLSX, PPTX, audio, images, etc.)
+-e packages/markitdown[all]
+
+# Web server
+fastapi>=0.100.0
+uvicorn>=0.22.0
+python-multipart>=0.0.6

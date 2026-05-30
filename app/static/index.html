@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MarkItDown Web Hub</title>
+    <!-- Modern typography from Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Beautiful modern CSS styling -->
+    <link rel="stylesheet" href="style.css?v=1.3.0">
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sleek Conversion History Sidebar -->
+        <aside class="sidebar" id="historySidebar">
+            <div class="sidebar-header">
+                <div class="brand">
+                    <i data-lucide="sparkles" class="brand-icon"></i>
+                    <span>MarkItDown Hub</span>
+                </div>
+                <button class="icon-btn close-sidebar-btn" id="closeSidebar" aria-label="Close Sidebar">
+                    <i data-lucide="x"></i>
+                </button>
+            </div>
+            
+            <div class="sidebar-section">
+                <div class="section-title">
+                    <span>Recent Conversions</span>
+                    <button class="clear-history-btn" id="clearHistory" title="Clear all history">
+                        <i data-lucide="trash-2"></i>
+                    </button>
+                </div>
+                <ul class="history-list" id="historyList">
+                    <!-- History items will be populated by JS -->
+                    <li class="empty-history">
+                        <i data-lucide="clock"></i>
+                        <p>No recent conversions</p>
+                    </li>
+                </ul>
+            </div>
+            
+            <div class="sidebar-footer">
+                <div class="status-indicator">
+                    <span class="pulse-dot"></span>
+                    <span>Local Host Active</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Workspace -->
+        <main class="main-content">
+            <!-- Glassmorphic Header -->
+            <header class="app-header">
+                <div class="header-left">
+                    <button class="icon-btn sidebar-toggle-btn" id="toggleSidebar" aria-label="Open Sidebar">
+                        <i data-lucide="menu"></i>
+                    </button>
+                    <div class="header-titles">
+                        <h1>Convert Anything to Markdown</h1>
+                        <p class="subtitle">Convert PDF, Word, Excel, PowerPoint, Audio, and Images to Markdown</p>
+                    </div>
+                </div>
+                
+                <div class="header-right">
+                    <button class="theme-toggle-btn" id="themeToggle" title="Toggle color scheme">
+                        <i data-lucide="sun" class="sun-icon"></i>
+                        <i data-lucide="moon" class="moon-icon"></i>
+                    </button>
+                </div>
+            </header>
+
+            <div class="workspace-grid">
+                <!-- Left Control Panel: Upload, URL & Configs -->
+                <section class="control-panel">
+                    <!-- Upload Box -->
+                    <div class="glass-card upload-card">
+                        <div class="card-header">
+                            <i data-lucide="upload-cloud" class="card-icon"></i>
+                            <h2>Upload Documents</h2>
+                        </div>
+                        
+                        <div class="dropzone" id="dropzone">
+                            <input type="file" id="fileInput" class="file-input" multiple>
+                            <div class="dropzone-content">
+                                <div class="dropzone-icon-wrapper">
+                                    <i data-lucide="file-text" class="file-icon animate-bounce"></i>
+                                </div>
+                                <h3>Drag & drop your file here</h3>
+                                <p class="dropzone-formats">PDF, DOCX, XLSX, PPTX, MP3, PNG, JPG, ZIP, EPUB, CSV</p>
+                                <span class="or-separator">or</span>
+                                <button class="btn btn-primary browse-btn" id="browseBtn">
+                                    <i data-lucide="folder-open"></i> Browse Files
+                                </button>
+                            </div>
+                            <div class="file-preview-zone" id="filePreviewZone">
+                                <div class="selected-file-card">
+                                    <i data-lucide="file" class="selected-file-icon"></i>
+                                    <div class="selected-file-details">
+                                        <span class="selected-file-name" id="fileName">document.pdf</span>
+                                        <span class="selected-file-size" id="fileSize">2.4 MB</span>
+                                    </div>
+                                    <button class="remove-file-btn" id="removeFile" title="Remove selected file">
+                                        <i data-lucide="trash-2"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+
+                    <!-- OCR Engine Selector (hidden until needed) -->
+                    <div class="glass-card ocr-card hidden" id="ocrCard">
+                        <div class="card-header">
+                            <i data-lucide="scan-text" class="card-icon"></i>
+                            <h2>OCR Engine</h2>
+                        </div>
+                        <div class="ocr-notice" id="ocrNotice">
+                            <i data-lucide="alert-triangle"></i>
+                            <span id="ocrNoticeText"></span>
+                        </div>
+                        <div class="ocr-pills" id="ocrPills">
+                            <button class="ocr-pill active" data-engine="none" title="No OCR — use markitdown only">
+                                <i data-lucide="ban"></i>
+                                <span>Off</span>
+                            </button>
+                            <button class="ocr-pill" data-engine="tesseract" disabled title="Tesseract OCR">
+                                <i data-lucide="scan"></i>
+                                <span>Tesseract</span>
+                            </button>
+                            <button class="ocr-pill" data-engine="surya" disabled title="Surya OCR (best accuracy)">
+                                <i data-lucide="sparkles"></i>
+                                <span>Surya</span>
+                            </button>
+                        </div>
+                        <div class="ocr-convert-row hidden" id="ocrConvertRow">
+                            <button class="btn btn-primary ocr-convert-btn" id="ocrConvertBtn">
+                                <i data-lucide="play"></i>
+                                <span id="ocrConvertLabel">Convert</span>
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Right Workspace Panel: Output Editor & Previews -->
+                <section class="output-panel">
+                    <div class="glass-card output-card">
+                        <!-- Action Tabs & Meta Info -->
+                        <div class="output-header">
+                            <div class="tab-selectors">
+                                <button class="tab-btn active" id="btnPreviewTab">
+                                    <i data-lucide="eye" class="tab-icon"></i>
+                                    <span>Visual Preview</span>
+                                </button>
+                                <button class="tab-btn" id="btnRawTab">
+                                    <i data-lucide="file-code" class="tab-icon"></i>
+                                    <span>Raw Markdown</span>
+                                </button>
+                            </div>
+                            
+                            <div class="output-actions">
+                                <span class="ocr-badge hidden" id="ocrBadge">
+                                    <i data-lucide="scan-text"></i>
+                                    <span id="ocrBadgeLabel">OCR</span>
+                                </span>
+                                <span class="word-count" id="wordCount">0 words</span>
+                                <button class="btn btn-secondary" id="copyBtn" title="Copy to clipboard">
+                                    <i data-lucide="copy" class="tab-icon"></i>
+                                    <span>Copy</span>
+                                </button>
+                                <button class="btn btn-secondary" id="downloadBtn" title="Download markdown file">
+                                    <i data-lucide="download" class="tab-icon"></i>
+                                    <span>Download</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Workspace Previews -->
+                        <div class="output-workspace">
+                            <!-- Loading overlay -->
+                            <div class="loading-overlay" id="loadingOverlay">
+                                <div class="spinner-box">
+                                    <div class="double-bounce1"></div>
+                                    <div class="double-bounce2"></div>
+                                </div>
+                                <h3 id="loadingTitle">Parsing document...</h3>
+                                <p class="loading-subtitle" id="loadingSubtitle">MarkItDown is converting structure and assets to Markdown</p>
+                            </div>
+
+                            <!-- Empty workspace -->
+                            <div class="empty-workspace" id="emptyWorkspace">
+                                <div class="empty-icon-wrapper">
+                                    <i data-lucide="file-output" class="empty-icon"></i>
+                                </div>
+                                <h2>Your Markdown awaits</h2>
+                                <p>Upload a file on the left to begin conversion.</p>
+                            </div>
+
+                            <!-- Styled Visual Preview Container -->
+                            <div class="preview-container" id="previewContainer">
+                                <article class="markdown-body" id="visualPreview">
+                                    <!-- Markdown HTML will go here -->
+                                </article>
+                            </div>
+
+                            <!-- Raw Markdown Editor -->
+                            <div class="raw-container hidden" id="rawContainer">
+                                <textarea id="rawEditor" class="raw-editor" placeholder="Markdown source code will appear here..." spellcheck="false"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+        <!-- Floating Toast Notification System -->
+        <div class="toast-container" id="toastContainer"></div>
+    </div>
+
+    <!-- Markdown Parser for clientside HTML preview -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Main Interactive Script -->
+    <script src="app.js?v=1.3.0"></script>
+</body>
+</html>

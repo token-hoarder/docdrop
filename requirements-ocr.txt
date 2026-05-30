@@ -1,0 +1,53 @@
+# MarkItDown Web Hub — Optional OCR Dependencies
+# ================================================
+# The core app works without any of these.
+# Install only the tier(s) you need.
+#
+# After installing, restart the server — the UI will
+# automatically enable the corresponding engine pill.
+#
+#
+# TIER 1 — PDF page rendering (required for ANY PDF OCR)
+# -------------------------------------------------------
+# Converts PDF pages to images before OCR runs.
+# Also needs poppler installed on your system:
+#   macOS:   brew install poppler
+#   Ubuntu:  sudo apt install poppler-utils
+#   Windows: https://github.com/oschwartz10612/poppler-windows
+#
+pdf2image
+
+
+# TIER 2 — Tesseract  (lightweight, good for clean printed scans)
+# ----------------------------------------------------------------
+# Also needs the Tesseract binary on your system:
+#   macOS:   brew install tesseract
+#   Ubuntu:  sudo apt install tesseract-ocr
+#   Windows: https://github.com/UB-Mannheim/tesseract/wiki
+#
+# No model download — works immediately after install.
+#
+pytesseract
+
+
+# TIER 3 — Surya  (best accuracy, layout-aware, ~1.4 GB on first use)
+# --------------------------------------------------------------------
+# Uses a VLM (vision-language model) for high-quality layout-aware OCR.
+# Models (~1.4 GB GGUF files) download automatically on first OCR run.
+# Requires llama-server on macOS/Linux (NVIDIA GPU uses vllm instead):
+#   macOS/Linux: brew install llama.cpp
+# Requires ~3 GB free disk space.
+#
+surya-ocr
+
+
+# Quick-install examples
+# ----------------------
+# Tesseract only (lightest, no model download):
+#   pip install pdf2image pytesseract
+#
+# Surya only (best accuracy):
+#   pip install pdf2image surya-ocr  &&  brew install llama.cpp
+#
+# Both:
+#   pip install -r requirements-ocr.txt  &&  brew install llama.cpp
