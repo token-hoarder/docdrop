@@ -1,16 +1,25 @@
 /* ==========================================================================
-   MARKITDOWN WEB HUB - CLIENT INTERACTIVE SYSTEM
+   DOCDROP - CLIENT INTERACTIVE SYSTEM
    ========================================================================== */
 
 document.addEventListener("DOMContentLoaded", () => {
     // ----------------------------------------------------------------------
-    // State Variables
+    // State
     // ----------------------------------------------------------------------
-    let selectedFile = null;
-    let conversionHistory = JSON.parse(localStorage.getItem("mid_history") || "[]");
-    let currentMarkdown = "";
-    let currentFilename = "";
-    let selectedOcrEngine = "none";
+    const state = {
+        selectedFile: null,
+        selectedOcrEngine: "none",
+        ocrSuggestion: null,   // null = OCR card hidden; string = notice message
+        currentMarkdown: "",
+        currentFilename: "",
+        conversionHistory: JSON.parse(localStorage.getItem("mid_history") || "[]"),
+    };
+
+    function setState(patch) {
+        Object.assign(state, patch);
+        renderFileZone();
+        renderOcrCard();
+    }
 
     // ----------------------------------------------------------------------
     // DOM Element Selection
@@ -33,7 +42,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const fileNameSpan = document.getElementById("fileName");
     const fileSizeSpan = document.getElementById("fileSize");
     const removeFileBtn = document.getElementById("removeFile");
-
 
     // Workspace & Previews
     const btnPreviewTab = document.getElementById("btnPreviewTab");
@@ -68,8 +76,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Initialize Libraries
     // ----------------------------------------------------------------------
     lucide.createIcons();
-    
-    // Configure Marked.js options for beautiful layout
+
     marked.setOptions({
         gfm: true,
         breaks: true,
@@ -78,27 +85,46 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // ----------------------------------------------------------------------
+    // Render Functions
+    // ----------------------------------------------------------------------
+    function renderFileZone() {
+        const hasFile = !!state.selectedFile;
+        dropzone.querySelector(".dropzone-content").classList.toggle("hidden", hasFile);
+        filePreviewZone.style.display = hasFile ? "block" : "none";
+        if (hasFile) {
+            fileNameSpan.textContent = state.selectedFile.name;
+            fileSizeSpan.textContent = formatBytes(state.selectedFile.size);
+        }
+    }
+
+    function renderOcrCard() {
+        const hasCard = state.ocrSuggestion !== null;
+        ocrCard.classList.toggle("hidden", !hasCard);
+        if (hasCard) {
+            ocrNoticeText.textContent = state.ocrSuggestion;
+            ocrNotice.style.display = "flex";
+            lucide.createIcons();
+        }
+
+        ocrPills.querySelectorAll(".ocr-pill").forEach(p => {
+            p.classList.toggle("active", p.dataset.engine === state.selectedOcrEngine);
+        });
+
+        const hasEngine = state.selectedOcrEngine !== "none";
+        ocrConvertRow.classList.toggle("hidden", !hasEngine);
+        if (hasEngine) {
+            const label = state.selectedOcrEngine.charAt(0).toUpperCase() + state.selectedOcrEngine.slice(1);
+            ocrConvertLabel.textContent = `Convert with ${label}`;
+        }
+    }
+
+    // ----------------------------------------------------------------------
     // OCR Engine Selector
     // ----------------------------------------------------------------------
     let IMAGE_EXTS = new Set();
 
     function getFileExt(filename) {
         return filename.split(".").pop().toLowerCase();
-    }
-
-    function showOcrSuggestion(message) {
-        ocrNoticeText.textContent = message;
-        ocrNotice.style.display = "flex";
-        ocrCard.classList.remove("hidden");
-        lucide.createIcons();
-    }
-
-    function hideOcrCard() {
-        ocrCard.classList.add("hidden");
-        // Reset engine selection back to Off
-        selectedOcrEngine = "none";
-        ocrPills.querySelectorAll(".ocr-pill").forEach(p => p.classList.remove("active"));
-        ocrPills.querySelector('[data-engine="none"]').classList.add("active");
     }
 
     async function loadFormats() {
@@ -190,7 +216,6 @@ document.addEventListener("DOMContentLoaded", () => {
             ocrConvertBtn.classList.add("loading");
         } else {
             ocrConvertBtn.classList.remove("loading");
-            // Re-enable available engines
             loadAvailableEngines();
         }
     }
@@ -199,31 +224,21 @@ document.addEventListener("DOMContentLoaded", () => {
         const pill = e.target.closest(".ocr-pill");
         if (!pill || pill.disabled) return;
 
-        ocrPills.querySelectorAll(".ocr-pill").forEach(p => p.classList.remove("active"));
-        pill.classList.add("active");
-        selectedOcrEngine = pill.dataset.engine;
+        const engine = pill.dataset.engine;
 
-        if (selectedOcrEngine === "none") {
-            ocrConvertRow.classList.add("hidden");
-            return;
-        }
-
-        // Warn once per session for heavy models
-        if (MODEL_DOWNLOAD_SIZES[selectedOcrEngine] && !warnedEngines.has(selectedOcrEngine)) {
+        if (MODEL_DOWNLOAD_SIZES[engine] && !warnedEngines.has(engine)) {
             showToast(
-                `First use will download ${MODEL_DOWNLOAD_SIZES[selectedOcrEngine]} of models — this may take a minute.`,
+                `First use will download ${MODEL_DOWNLOAD_SIZES[engine]} of models — this may take a minute.`,
                 "warning"
             );
-            warnedEngines.add(selectedOcrEngine);
+            warnedEngines.add(engine);
         }
 
-        const label = selectedOcrEngine.charAt(0).toUpperCase() + selectedOcrEngine.slice(1);
-        ocrConvertLabel.textContent = `Convert with ${label}`;
-        ocrConvertRow.classList.remove("hidden");
+        setState({ selectedOcrEngine: engine });
     });
 
     ocrConvertBtn.addEventListener("click", () => {
-        if (selectedFile && selectedOcrEngine !== "none") {
+        if (state.selectedFile && state.selectedOcrEngine !== "none") {
             triggerFileConversion();
         }
     });
@@ -234,15 +249,13 @@ document.addEventListener("DOMContentLoaded", () => {
     // ----------------------------------------------------------------------
     // Initialize Styles & Themes
     // ----------------------------------------------------------------------
-    // Set initial theme based on local storage or system preference
     const savedTheme = localStorage.getItem("theme");
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    
+
     if (savedTheme === "light" || (!savedTheme && !prefersDark)) {
         document.body.classList.add("light-theme");
     }
 
-    // Toggle theme action
     themeToggleBtn.addEventListener("click", () => {
         document.body.classList.toggle("light-theme");
         const activeTheme = document.body.classList.contains("light-theme") ? "light" : "dark";
@@ -253,7 +266,6 @@ document.addEventListener("DOMContentLoaded", () => {
     // ----------------------------------------------------------------------
     // UI Layout Helpers & Interactions
     // ----------------------------------------------------------------------
-    // Toggle Sidebar
     toggleSidebarBtn.addEventListener("click", () => {
         historySidebar.classList.add("active");
     });
@@ -262,12 +274,9 @@ document.addEventListener("DOMContentLoaded", () => {
         historySidebar.classList.remove("active");
     });
 
-
-
     // ----------------------------------------------------------------------
     // Drag and Drop Logic
     // ----------------------------------------------------------------------
-    // Dropzone Visual Hover listeners
     ["dragenter", "dragover"].forEach(eventName => {
         dropzone.addEventListener(eventName, (e) => {
             e.preventDefault();
@@ -284,7 +293,6 @@ document.addEventListener("DOMContentLoaded", () => {
         }, false);
     });
 
-    // File drop event
     dropzone.addEventListener("drop", (e) => {
         const dt = e.dataTransfer;
         const files = dt.files;
@@ -293,7 +301,6 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
-    // File browse triggers
     browseBtn.addEventListener("click", () => {
         fileInput.click();
     });
@@ -304,45 +311,29 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
-    // Process chosen file details
     function handleSelectedFile(file) {
-        selectedFile = file;
-        fileNameSpan.textContent = file.name;
-        fileSizeSpan.textContent = formatBytes(file.size);
-
-        dropzone.querySelector(".dropzone-content").classList.add("hidden");
-        filePreviewZone.style.display = "block";
-
         const ext = getFileExt(file.name);
-
         if (IMAGE_EXTS.has(ext)) {
-            // Images can't be read by markitdown without an LLM — show OCR card up front
-            showOcrSuggestion(
-                "This is an image file. markitdown cannot extract text from images directly — select an OCR engine below to convert it."
-            );
-            // Don't auto-convert yet; wait for user to pick an engine
+            setState({
+                selectedFile: file,
+                ocrSuggestion: "This is an image file. markitdown cannot extract text from images directly — select an OCR engine below to convert it.",
+            });
         } else {
-            hideOcrCard();
+            setState({ selectedFile: file, ocrSuggestion: null });
             triggerFileConversion();
         }
     }
 
-    // Reset chosen file selection
     removeFileBtn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        selectedFile = null;
         fileInput.value = "";
-
-        filePreviewZone.style.display = "none";
-        dropzone.querySelector(".dropzone-content").classList.remove("hidden");
-        hideOcrCard();
+        setState({ selectedFile: null, ocrSuggestion: null, selectedOcrEngine: "none" });
     });
 
     // ----------------------------------------------------------------------
     // Markdown Parsing & Preview System
     // ----------------------------------------------------------------------
-    // Visual tab switcher
     btnPreviewTab.addEventListener("click", () => {
         btnPreviewTab.classList.add("active");
         btnRawTab.classList.remove("active");
@@ -357,7 +348,6 @@ document.addEventListener("DOMContentLoaded", () => {
         previewContainer.classList.add("hidden");
     });
 
-    // Live Word Counter
     function updateWordCount(text) {
         const words = text.trim() ? text.trim().split(/\s+/).length : 0;
         wordCountSpan.textContent = `${words} words`;
@@ -366,26 +356,21 @@ document.addEventListener("DOMContentLoaded", () => {
     // ----------------------------------------------------------------------
     // API Integration & Server Requests
     // ----------------------------------------------------------------------
-    
-    // File Upload Conversion Action
     function triggerFileConversion() {
-        if (!selectedFile) return;
+        if (!state.selectedFile) return;
 
         const formData = new FormData();
-        formData.append("file", selectedFile);
-        formData.append("ocr_engine", selectedOcrEngine);
+        formData.append("file", state.selectedFile);
+        formData.append("ocr_engine", state.selectedOcrEngine);
 
-        if (selectedOcrEngine !== "none") {
+        if (state.selectedOcrEngine !== "none") {
             setOcrProcessing(true);
-            startProgressMessages(selectedOcrEngine);
+            startProgressMessages(state.selectedOcrEngine);
         }
 
         performConversion(formData);
     }
 
-
-
-    // Generic Fetch API Wrapper
     async function performConversion(formData) {
         loadingOverlay.classList.add("active");
 
@@ -396,16 +381,11 @@ document.addEventListener("DOMContentLoaded", () => {
             });
 
             const data = await response.json();
-            
+
             if (!response.ok) {
                 throw new Error(data.detail || "Server conversion failed.");
             }
 
-            // Populate Output Workspace
-            currentMarkdown = data.markdown;
-            currentFilename = data.filename;
-
-            // Show OCR badge if OCR was used
             if (data.ocr_used && data.ocr_engine) {
                 const label = data.ocr_engine.charAt(0).toUpperCase() + data.ocr_engine.slice(1);
                 ocrBadgeLabel.textContent = `OCR: ${label}`;
@@ -415,26 +395,26 @@ document.addEventListener("DOMContentLoaded", () => {
                 ocrBadge.classList.add("hidden");
             }
 
-            // If the result is nearly empty and this is a PDF, suggest OCR
             const isSparse = data.markdown.trim().length < 100;
-            const isPdf = selectedFile && getFileExt(selectedFile.name) === "pdf";
-            if (isSparse && isPdf && !data.ocr_used) {
-                showOcrSuggestion(
-                    "This PDF appears to be scanned or image-based — no readable text was found. Select an OCR engine below to extract the text."
-                );
-            } else if (data.ocr_used || !isSparse) {
-                hideOcrCard();
-            }
+            const isPdf = state.selectedFile && getFileExt(state.selectedFile.name) === "pdf";
+            const newSuggestion = (isSparse && isPdf && !data.ocr_used)
+                ? "This PDF appears to be scanned or image-based — no readable text was found. Select an OCR engine below to extract the text."
+                : null;
 
-            displayMarkdownResults(currentMarkdown, currentFilename);
-            
-            // Log to local history list
+            setState({
+                currentMarkdown: data.markdown,
+                currentFilename: data.filename,
+                ocrSuggestion: newSuggestion,
+            });
+
+            displayMarkdownResults(state.currentMarkdown, state.currentFilename);
+
             saveToHistory({
-                name: currentFilename,
-                date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                name: state.currentFilename,
+                date: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
                 timestamp: Date.now(),
                 type: formData.has("url") ? "url" : "file",
-                markdown: currentMarkdown
+                markdown: state.currentMarkdown,
             });
 
             showToast("Document converted successfully!", "success");
@@ -449,25 +429,19 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // Render results in output panels
     function displayMarkdownResults(markdown, filename) {
-        // Hide empty workspace placeholder
         emptyWorkspace.style.display = "none";
-        
-        // Show raw text
+
         rawEditor.value = markdown;
         updateWordCount(markdown);
 
-        // Parse & Render beautiful visual HTML preview
         visualPreview.innerHTML = marked.parse(markdown);
-        
-        // Make sure all links open in a new tab
+
         visualPreview.querySelectorAll("a").forEach(a => {
             a.setAttribute("target", "_blank");
             a.setAttribute("rel", "noopener noreferrer");
         });
 
-        // Jump to preview tab initially
         btnPreviewTab.click();
     }
 
@@ -475,23 +449,18 @@ document.addEventListener("DOMContentLoaded", () => {
     // History Persistence Engine
     // ----------------------------------------------------------------------
     function saveToHistory(item) {
-        // Prevent duplicate logs based on matching name & text content
-        conversionHistory = conversionHistory.filter(h => !(h.name === item.name && h.markdown === item.markdown));
-        
-        // Keep history list within clean size bounds (e.g. 10 items max)
-        conversionHistory.unshift(item);
-        if (conversionHistory.length > 10) {
-            conversionHistory.pop();
-        }
-        
-        localStorage.setItem("mid_history", JSON.stringify(conversionHistory));
+        let history = state.conversionHistory.filter(h => !(h.name === item.name && h.markdown === item.markdown));
+        history.unshift(item);
+        if (history.length > 10) history.pop();
+        localStorage.setItem("mid_history", JSON.stringify(history));
+        state.conversionHistory = history;
         renderHistoryList();
     }
 
     function renderHistoryList() {
         historyList.innerHTML = "";
-        
-        if (conversionHistory.length === 0) {
+
+        if (state.conversionHistory.length === 0) {
             historyList.innerHTML = `
                 <li class="empty-history">
                     <i data-lucide="clock"></i>
@@ -502,13 +471,13 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
-        conversionHistory.forEach((item) => {
+        state.conversionHistory.forEach((item) => {
             const li = document.createElement("li");
             li.className = "history-item";
-            
+
             const isUrl = item.type === "url";
             const iconName = isUrl ? "globe" : "file-text";
-            
+
             li.innerHTML = `
                 <i data-lucide="${iconName}" class="history-item-icon"></i>
                 <div class="history-item-details">
@@ -516,15 +485,15 @@ document.addEventListener("DOMContentLoaded", () => {
                     <span class="history-item-meta">${item.date}</span>
                 </div>
             `;
-            
-            // Clicking restore item state
+
             li.addEventListener("click", () => {
-                currentMarkdown = item.markdown;
-                currentFilename = item.name;
-                displayMarkdownResults(currentMarkdown, currentFilename);
+                setState({
+                    currentMarkdown: item.markdown,
+                    currentFilename: item.name,
+                });
+                displayMarkdownResults(state.currentMarkdown, state.currentFilename);
                 showToast(`Restored: ${item.name}`, "success");
-                
-                // On mobile, close sidebar drawer when item selected
+
                 if (window.innerWidth <= 768) {
                     historySidebar.classList.remove("active");
                 }
@@ -536,9 +505,8 @@ document.addEventListener("DOMContentLoaded", () => {
         lucide.createIcons();
     }
 
-    // Clear local storage history
     clearHistoryBtn.addEventListener("click", () => {
-        conversionHistory = [];
+        state.conversionHistory = [];
         localStorage.removeItem("mid_history");
         renderHistoryList();
         showToast("History cleared", "warning");
@@ -547,17 +515,15 @@ document.addEventListener("DOMContentLoaded", () => {
     // ----------------------------------------------------------------------
     // Utility Actions: Copy & Download
     // ----------------------------------------------------------------------
-    // Copy markdown code to clipboard
     copyBtn.addEventListener("click", () => {
-        if (!currentMarkdown) {
+        if (!state.currentMarkdown) {
             showToast("No markdown content to copy.", "warning");
             return;
         }
 
-        navigator.clipboard.writeText(currentMarkdown).then(() => {
+        navigator.clipboard.writeText(state.currentMarkdown).then(() => {
             showToast("Copied to clipboard!", "success");
-            
-            // Add a brief spring scale visual to button
+
             copyBtn.style.transform = "scale(0.85)";
             setTimeout(() => {
                 copyBtn.style.transform = "scale(1)";
@@ -569,31 +535,28 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
-    // Download Markdown file (.md)
     downloadBtn.addEventListener("click", () => {
-        if (!currentMarkdown) {
+        if (!state.currentMarkdown) {
             showToast("No markdown content to download.", "warning");
             return;
         }
 
-        const blob = new Blob([currentMarkdown], { type: "text/markdown;charset=utf-8;" });
+        const blob = new Blob([state.currentMarkdown], { type: "text/markdown;charset=utf-8;" });
         const url = URL.createObjectURL(blob);
-        
+
         const a = document.createElement("a");
         a.href = url;
-        
-        // Clean filename, make sure it has .md extension
-        let baseName = currentFilename || "document";
+
+        let baseName = state.currentFilename || "document";
         const dotIndex = baseName.lastIndexOf(".");
         if (dotIndex > 0) {
             baseName = baseName.substring(0, dotIndex);
         }
         a.download = `${baseName}.md`;
-        
+
         document.body.appendChild(a);
         a.click();
-        
-        // Clean up
+
         setTimeout(() => {
             document.body.removeChild(a);
             window.URL.revokeObjectURL(url);
@@ -605,7 +568,6 @@ document.addEventListener("DOMContentLoaded", () => {
     // ----------------------------------------------------------------------
     // UI Format Helpers
     // ----------------------------------------------------------------------
-    // Helper to format bytes cleanly
     function formatBytes(bytes, decimals = 1) {
         if (bytes === 0) return "0 Bytes";
         const k = 1024;
@@ -615,11 +577,10 @@ document.addEventListener("DOMContentLoaded", () => {
         return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
     }
 
-    // Floating notifications toast builder
     function showToast(message, type = "success") {
         const toast = document.createElement("div");
         toast.className = `toast toast-${type}`;
-        
+
         let iconName = "check-circle";
         if (type === "error") iconName = "alert-triangle";
         if (type === "warning") iconName = "info";
@@ -628,11 +589,10 @@ document.addEventListener("DOMContentLoaded", () => {
             <i data-lucide="${iconName}" class="toast-icon"></i>
             <span class="toast-message">${message}</span>
         `;
-        
+
         toastContainer.appendChild(toast);
         lucide.createIcons();
 
-        // Slide out and remove toast after 3.5s
         setTimeout(() => {
             toast.style.transform = "translateY(20px)";
             toast.style.opacity = "0";
@@ -645,7 +605,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ----------------------------------------------------------------------
-    // Initial Render Actions
+    // Initial Render
     // ----------------------------------------------------------------------
     renderHistoryList();
 });
