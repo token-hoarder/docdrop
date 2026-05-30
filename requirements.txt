@@ -1,4 +1,4 @@
-# MarkItDown Web Hub - Unified Dependencies
+# DocDrop - Unified Dependencies
 # Installs the local markitdown package (with all format support) + web server
 
 # Local markitdown with all optional converters (PDF, DOCX, XLSX, PPTX, audio, images, etc.)

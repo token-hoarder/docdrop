@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 REM =============================================================================
-REM  MarkItDown Web Hub - Startup Script (Windows)
+REM  DocDrop - Startup Script (Windows)
 REM =============================================================================
 
 set VENV_DIR=.venv
@@ -11,7 +11,7 @@ set PORT=8000
 
 echo.
 echo  ==========================================
-echo   MarkItDown Web Hub
+echo   DocDrop
 echo  ==========================================
 echo.
 

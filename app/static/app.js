@@ -163,7 +163,7 @@ document.addEventListener("DOMContentLoaded", () => {
             progressInterval = null;
         }
         loadingTitle.textContent = "Parsing document...";
-        loadingSubtitle.textContent = "MarkItDown is converting structure and assets to Markdown";
+        loadingSubtitle.textContent = "DocDrop is converting structure and assets to Markdown";
     }
 
     function setOcrProcessing(active) {

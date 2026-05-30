@@ -15,7 +15,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
     datefmt="%H:%M:%S",
 )
-log = logging.getLogger("markitdown_hub")
+log = logging.getLogger("docdrop")
 
 # ── Path setup ────────────────────────────────────────────────────────────────
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -34,7 +34,7 @@ IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.tiff', '.tif', '.bmp', '
 _surya_predictor = None
 
 # ── App ───────────────────────────────────────────────────────────────────────
-app = FastAPI(title="MarkItDown Web Hub", version="1.0.0")
+app = FastAPI(title="DocDrop", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
