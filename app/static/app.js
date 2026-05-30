@@ -80,7 +80,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // ----------------------------------------------------------------------
     // OCR Engine Selector
     // ----------------------------------------------------------------------
-    const IMAGE_EXTS = new Set(["png","jpg","jpeg","webp","tiff","tif","bmp","gif"]);
+    let IMAGE_EXTS = new Set();
 
     function getFileExt(filename) {
         return filename.split(".").pop().toLowerCase();
@@ -99,6 +99,16 @@ document.addEventListener("DOMContentLoaded", () => {
         selectedOcrEngine = "none";
         ocrPills.querySelectorAll(".ocr-pill").forEach(p => p.classList.remove("active"));
         ocrPills.querySelector('[data-engine="none"]').classList.add("active");
+    }
+
+    async function loadFormats() {
+        try {
+            const res = await fetch("/api/formats");
+            const data = await res.json();
+            IMAGE_EXTS = new Set(data.image_extensions || []);
+        } catch (_) {
+            // server not ready yet — IMAGE_EXTS stays empty
+        }
     }
 
     async function loadAvailableEngines() {
@@ -218,6 +228,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
+    loadFormats();
     loadAvailableEngines();
 
     // ----------------------------------------------------------------------

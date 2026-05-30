@@ -224,13 +224,70 @@ def run_ocr(images, engine: str) -> str:
     return OCR_REGISTRY[engine].run(images)
 
 
-# ── Engine availability probe ─────────────────────────────────────────────────
+# ── Format / engine probes ────────────────────────────────────────────────────
+
+@app.get("/api/formats")
+async def get_formats():
+    return {"image_extensions": [ext.lstrip(".") for ext in IMAGE_EXTENSIONS]}
+
 
 @app.get("/api/ocr-engines")
 async def get_ocr_engines():
     available = [name for name, engine in OCR_REGISTRY.items() if engine.is_available()]
     log.info("Engine probe → available: %s", available or ["none"])
     return {"engines": available}
+
+
+# ── Conversion pipeline ───────────────────────────────────────────────────────
+
+from dataclasses import dataclass
+
+@dataclass
+class ConversionResult:
+    markdown: str
+    ocr_used: bool
+    ocr_engine: Optional[str]
+
+
+def pipeline_convert(file_path: str, suffix: str, ocr_engine: str) -> ConversionResult:
+    t0 = time.perf_counter()
+    log.info("markitdown — converting %r...", file_path)
+    markdown = MarkItDown().convert(file_path).text_content
+    log.info("markitdown — done in %.2fs | %d chars extracted", time.perf_counter() - t0, len(markdown.strip()))
+
+    ocr_used = False
+    ext = suffix.lower()
+
+    if ocr_engine and ocr_engine != "none":
+        needs_ocr = False
+        if ext in IMAGE_EXTENSIONS:
+            log.info("Image file detected — OCR will run unconditionally")
+            needs_ocr = True
+        elif ext == ".pdf":
+            needs_ocr = pdf_needs_ocr(file_path)
+
+        if needs_ocr:
+            if ext in IMAGE_EXTENSIONS:
+                from PIL import Image
+                images = [Image.open(file_path).convert("RGB")]
+                log.info("Loaded image as single-page input")
+            else:
+                images = pdf_to_images(file_path)
+
+            ocr_result = run_ocr(images, ocr_engine)
+            if ocr_result.strip():
+                markdown = ocr_result
+                ocr_used = True
+            else:
+                log.warning("OCR returned empty output — keeping markitdown result")
+        else:
+            log.info("OCR not needed — using markitdown output")
+
+    log.info(
+        "Done — ocr_used=%s engine=%s | %d words",
+        ocr_used, ocr_engine if ocr_used else "n/a", len(markdown.split()),
+    )
+    return ConversionResult(markdown=markdown, ocr_used=ocr_used, ocr_engine=ocr_engine if ocr_used else None)
 
 
 # ── Main conversion endpoint ──────────────────────────────────────────────────
@@ -252,57 +309,15 @@ async def convert_document(
         temp_file_path = tmp.name
 
     try:
-        t0 = time.perf_counter()
-        log.info("markitdown — converting %r...", file.filename)
-        result = MarkItDown().convert(temp_file_path)
-        markdown = result.text_content
-        log.info(
-            "markitdown — done in %.2fs | %d chars extracted",
-            time.perf_counter() - t0, len(markdown.strip()),
-        )
-        ocr_used = False
-
-        if ocr_engine and ocr_engine != "none":
-            ext = suffix.lower()
-            needs_ocr = False
-
-            if ext in IMAGE_EXTENSIONS:
-                log.info("Image file detected — OCR will run unconditionally")
-                needs_ocr = True
-            elif ext == ".pdf":
-                needs_ocr = pdf_needs_ocr(temp_file_path)
-
-            if needs_ocr:
-                if ext in IMAGE_EXTENSIONS:
-                    from PIL import Image
-                    images = [Image.open(temp_file_path).convert("RGB")]
-                    log.info("Loaded image as single-page input")
-                else:
-                    images = pdf_to_images(temp_file_path)
-
-                ocr_result = run_ocr(images, ocr_engine)
-                if ocr_result.strip():
-                    markdown = ocr_result
-                    ocr_used = True
-                else:
-                    log.warning("OCR returned empty output — keeping markitdown result")
-            else:
-                log.info("OCR not needed — using markitdown output")
-
-        log.info(
-            "Done — ocr_used=%s engine=%s | %d words",
-            ocr_used, ocr_engine if ocr_used else "n/a", len(markdown.split()),
-        )
-
+        result = pipeline_convert(temp_file_path, suffix, ocr_engine)
         return {
             "success": True,
             "filename": file.filename,
             "size_bytes": os.path.getsize(temp_file_path),
-            "markdown": markdown,
-            "ocr_used": ocr_used,
-            "ocr_engine": ocr_engine if ocr_used else None,
+            "markdown": result.markdown,
+            "ocr_used": result.ocr_used,
+            "ocr_engine": result.ocr_engine,
         }
-
     except HTTPException:
         raise
     except Exception as e:
