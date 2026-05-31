@@ -84,6 +84,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const signOutBtn = document.getElementById("signOutBtn");
     const userMenu = document.getElementById("userMenu");
     const userEmail = document.getElementById("userEmail");
+    const creditBadge = document.getElementById("creditBadge");
+    const creditCount = document.getElementById("creditCount");
     const authModalBackdrop = document.getElementById("authModalBackdrop");
     const closeAuthModal = document.getElementById("closeAuthModal");
     const authForm = document.getElementById("authForm");
@@ -110,15 +112,28 @@ document.addEventListener("DOMContentLoaded", () => {
     // ----------------------------------------------------------------------
     let activeAuthTab = "signin";
 
+    async function refreshCredits() {
+        try {
+            const res = await fetchWithAuth("/api/credits");
+            if (res.ok) {
+                const data = await res.json();
+                creditCount.textContent = data.balance;
+                creditBadge.classList.toggle("low-credits", data.balance <= 5);
+            }
+        } catch (_) {}
+    }
+
     function renderAuthState(user) {
         state.user = user;
         if (user) {
             signInBtn.classList.add("hidden");
             userMenu.classList.remove("hidden");
             userEmail.textContent = user.email;
+            refreshCredits();
         } else {
             signInBtn.classList.remove("hidden");
             userMenu.classList.add("hidden");
+            creditCount.textContent = "—";
         }
     }
 
@@ -552,6 +567,7 @@ document.addEventListener("DOMContentLoaded", () => {
             });
 
             showToast("Document converted successfully!", "success");
+            if (state.user) refreshCredits();
 
         } catch (error) {
             console.error("Conversion error:", error);

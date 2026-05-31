@@ -31,8 +31,9 @@ try:
 except ImportError:
     raise RuntimeError("Could not import markitdown. Ensure it is installed or path is correct.")
 
-from app.auth import get_current_user
+from app.auth import get_current_user, require_user
 from app.db import log_conversion
+from app.credits import get_balance
 
 IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.tiff', '.tif', '.bmp', '.gif'}
 MAX_FILE_SIZE_MB = 50
@@ -239,6 +240,16 @@ def run_ocr(images, engine: str) -> str:
     if engine not in OCR_REGISTRY:
         raise HTTPException(status_code=400, detail=f"Unknown OCR engine: {engine}")
     return OCR_REGISTRY[engine].run(images)
+
+
+# ── Credits ───────────────────────────────────────────────────────────────────
+
+@app.get("/api/credits")
+async def get_credits(user=Depends(require_user)):
+    """Returns the current OCR credit balance for the authenticated user."""
+    balance = get_balance(str(user.id))
+    log.info("Credits check — user=%s balance=%d", user.id, balance)
+    return {"balance": balance}
 
 
 # ── Format / engine probes ────────────────────────────────────────────────────
