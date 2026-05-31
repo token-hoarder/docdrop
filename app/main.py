@@ -5,9 +5,12 @@ import logging
 import tempfile
 import shutil
 from typing import Optional
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ── Logger ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -28,7 +31,12 @@ try:
 except ImportError:
     raise RuntimeError("Could not import markitdown. Ensure it is installed or path is correct.")
 
+from app.auth import get_current_user
+from app.db import log_conversion
+
 IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.tiff', '.tif', '.bmp', '.gif'}
+MAX_FILE_SIZE_MB = 50
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(title="DocDrop", version="1.0.0")
@@ -40,6 +48,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    import traceback
+    log.error("Unhandled exception on %s: %s\n%s", request.url.path, exc, traceback.format_exc())
+    return JSONResponse(status_code=500, content={"detail": "An unexpected error occurred. Please try again."})
 
 # ── PDF helpers ───────────────────────────────────────────────────────────────
 
@@ -296,24 +313,55 @@ def pipeline_convert(file_path: str, suffix: str, ocr_engine: str) -> Conversion
 async def convert_document(
     file: Optional[UploadFile] = File(None),
     ocr_engine: Optional[str] = Form("none"),
+    user=Depends(get_current_user),
 ):
     if not file:
         raise HTTPException(status_code=400, detail="A file upload is required.")
 
-    size_kb = round((file.size or 0) / 1024, 1)
-    suffix = os.path.splitext(file.filename)[1]
-    log.info("Conversion request — file=%r size=%s KB engine=%s", file.filename, size_kb, ocr_engine)
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Uploaded file has no filename.")
+
+    file_size = file.size or 0
+    if file_size > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large ({round(file_size / 1024 / 1024, 1)} MB). Maximum allowed size is {MAX_FILE_SIZE_MB} MB."
+        )
+
+    suffix = os.path.splitext(file.filename)[1].lower()
+    if not suffix:
+        raise HTTPException(status_code=400, detail="Could not determine file type. Please upload a file with a valid extension.")
+
+    size_kb = round(file_size / 1024, 1)
+    user_id = str(user.id) if user else None
+    log.info("Conversion request — file=%r size=%s KB engine=%s user=%s", file.filename, size_kb, ocr_engine, user_id or "anonymous")
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         shutil.copyfileobj(file.file, tmp)
         temp_file_path = tmp.name
 
+    t_start = time.perf_counter()
     try:
         result = pipeline_convert(temp_file_path, suffix, ocr_engine)
+        duration_ms = round((time.perf_counter() - t_start) * 1000)
+
+        log_conversion(
+            user_id=user_id,
+            filename=file.filename,
+            file_ext=suffix,
+            file_size_bytes=file_size,
+            ocr_engine=ocr_engine,
+            ocr_used=result.ocr_used,
+            page_count=None,
+            char_count=len(result.markdown),
+            word_count=len(result.markdown.split()),
+            duration_ms=duration_ms,
+        )
+
         return {
             "success": True,
             "filename": file.filename,
-            "size_bytes": os.path.getsize(temp_file_path),
+            "size_bytes": file_size,
             "markdown": result.markdown,
             "ocr_used": result.ocr_used,
             "ocr_engine": result.ocr_engine,
@@ -322,7 +370,7 @@ async def convert_document(
         raise
     except Exception as e:
         import traceback
-        log.error("Conversion failed: %s\n%s", e, traceback.format_exc())
+        log.error("Conversion failed for %r: %s\n%s", file.filename, e, traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Conversion failed: {str(e)}")
     finally:
         if os.path.exists(temp_file_path):

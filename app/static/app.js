@@ -2,6 +2,12 @@
    DOCDROP - CLIENT INTERACTIVE SYSTEM
    ========================================================================== */
 
+// Supabase client — publishable key is safe to expose in frontend
+const _supabase = supabase.createClient(
+    "https://fiorxuddpviuwouyzbdm.supabase.co",
+    "sb_publishable_tylHmfeOFiuiCkfqf-UUOQ_lIhQo97g"
+);
+
 document.addEventListener("DOMContentLoaded", () => {
     // ----------------------------------------------------------------------
     // State
@@ -13,6 +19,7 @@ document.addEventListener("DOMContentLoaded", () => {
         currentMarkdown: "",
         currentFilename: "",
         conversionHistory: JSON.parse(localStorage.getItem("mid_history") || "[]"),
+        user: null,
     };
 
     function setState(patch) {
@@ -72,6 +79,20 @@ document.addEventListener("DOMContentLoaded", () => {
     // Notifications
     const toastContainer = document.getElementById("toastContainer");
 
+    // Auth
+    const signInBtn = document.getElementById("signInBtn");
+    const signOutBtn = document.getElementById("signOutBtn");
+    const userMenu = document.getElementById("userMenu");
+    const userEmail = document.getElementById("userEmail");
+    const authModalBackdrop = document.getElementById("authModalBackdrop");
+    const closeAuthModal = document.getElementById("closeAuthModal");
+    const authForm = document.getElementById("authForm");
+    const authEmail = document.getElementById("authEmail");
+    const authPassword = document.getElementById("authPassword");
+    const authError = document.getElementById("authError");
+    const authSubmitLabel = document.getElementById("authSubmitLabel");
+    const authTabs = document.querySelectorAll(".auth-tab");
+
     // ----------------------------------------------------------------------
     // Initialize Libraries
     // ----------------------------------------------------------------------
@@ -83,6 +104,112 @@ document.addEventListener("DOMContentLoaded", () => {
         headerIds: true,
         mangle: false
     });
+
+    // ----------------------------------------------------------------------
+    // Auth
+    // ----------------------------------------------------------------------
+    let activeAuthTab = "signin";
+
+    function renderAuthState(user) {
+        state.user = user;
+        if (user) {
+            signInBtn.classList.add("hidden");
+            userMenu.classList.remove("hidden");
+            userEmail.textContent = user.email;
+        } else {
+            signInBtn.classList.remove("hidden");
+            userMenu.classList.add("hidden");
+        }
+    }
+
+    function openAuthModal() {
+        authModalBackdrop.classList.remove("hidden");
+        authEmail.focus();
+        lucide.createIcons();
+    }
+
+    function closeModal() {
+        authModalBackdrop.classList.add("hidden");
+        authForm.reset();
+        authError.classList.add("hidden");
+    }
+
+    authTabs.forEach(tab => {
+        tab.addEventListener("click", () => {
+            authTabs.forEach(t => t.classList.remove("active"));
+            tab.classList.add("active");
+            activeAuthTab = tab.dataset.tab;
+            authSubmitLabel.textContent = activeAuthTab === "signin" ? "Sign In" : "Create Account";
+            authError.classList.add("hidden");
+        });
+    });
+
+    signInBtn.addEventListener("click", openAuthModal);
+    closeAuthModal.addEventListener("click", closeModal);
+    authModalBackdrop.addEventListener("click", (e) => {
+        if (e.target === authModalBackdrop) closeModal();
+    });
+
+    authForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        authError.classList.add("hidden");
+        const email = authEmail.value.trim();
+        const password = authPassword.value;
+
+        try {
+            let result;
+            if (activeAuthTab === "signin") {
+                result = await _supabase.auth.signInWithPassword({ email, password });
+            } else {
+                result = await _supabase.auth.signUp({ email, password });
+            }
+
+            if (result.error) throw result.error;
+
+            closeModal();
+            const msg = activeAuthTab === "signup"
+                ? "Account created! Check your email to confirm."
+                : "Signed in successfully!";
+            showToast(msg, "success");
+        } catch (err) {
+            authError.textContent = err.message;
+            authError.classList.remove("hidden");
+        }
+    });
+
+    signOutBtn.addEventListener("click", async () => {
+        await _supabase.auth.signOut();
+        showToast("Signed out", "success");
+    });
+
+    // Listen for auth state changes (login, logout, token refresh)
+    _supabase.auth.onAuthStateChange((_event, session) => {
+        renderAuthState(session?.user ?? null);
+    });
+
+    // Restore session on page load
+    _supabase.auth.getSession().then(({ data: { session } }) => {
+        renderAuthState(session?.user ?? null);
+    });
+
+    async function getAuthHeaders() {
+        // refreshSession silently renews an expired token if a refresh token exists
+        const { data: { session } } = await _supabase.auth.getSession();
+        if (!session) return {};
+        return { Authorization: `Bearer ${session.access_token}` };
+    }
+
+    async function fetchWithAuth(url, options = {}) {
+        const headers = await getAuthHeaders();
+        const res = await fetch(url, { ...options, headers: { ...headers, ...options.headers } });
+        if (res.status === 401) {
+            // Token may have expired mid-session — sign out cleanly
+            await _supabase.auth.signOut();
+            showToast("Your session expired. Please sign in again.", "warning");
+            throw new Error("Session expired");
+        }
+        return res;
+    }
 
     // ----------------------------------------------------------------------
     // Render Functions
@@ -139,7 +266,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     async function loadAvailableEngines() {
         try {
-            const res = await fetch("/api/ocr-engines");
+            const res = await fetchWithAuth("/api/ocr-engines");
             const data = await res.json();
             const available = data.engines || [];
             ocrPills.querySelectorAll(".ocr-pill[data-engine]").forEach(pill => {
@@ -311,7 +438,14 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
+    const MAX_FILE_MB = 50;
+
     function handleSelectedFile(file) {
+        if (file.size > MAX_FILE_MB * 1024 * 1024) {
+            showToast(`File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum is ${MAX_FILE_MB} MB.`, "error");
+            return;
+        }
+
         const ext = getFileExt(file.name);
         if (IMAGE_EXTS.has(ext)) {
             setState({
@@ -375,7 +509,7 @@ document.addEventListener("DOMContentLoaded", () => {
         loadingOverlay.classList.add("active");
 
         try {
-            const response = await fetch("/api/convert", {
+            const response = await fetchWithAuth("/api/convert", {
                 method: "POST",
                 body: formData
             });
@@ -421,7 +555,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
         } catch (error) {
             console.error("Conversion error:", error);
-            showToast(error.message, "error");
+            if (!navigator.onLine) {
+                showToast("No internet connection. Please check your network and try again.", "error");
+            } else if (error.name === "TypeError" && error.message.includes("fetch")) {
+                showToast("Could not reach the server. Is DocDrop running?", "error");
+            } else {
+                showToast(error.message || "Conversion failed. Please try again.", "error");
+            }
         } finally {
             loadingOverlay.classList.remove("active");
             stopProgressMessages();
