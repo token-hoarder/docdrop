@@ -235,6 +235,40 @@
         <!-- Floating Toast Notification System -->
         <div class="toast-container" id="toastContainer"></div>
 
+        <!-- Buy Credits Modal -->
+        <div class="modal-backdrop hidden" id="creditsModalBackdrop">
+            <div class="modal glass-card" id="creditsModal">
+                <div class="modal-header">
+                    <h2>Buy OCR Credits</h2>
+                    <button class="icon-btn" id="closeCreditsModal">
+                        <i data-lucide="x"></i>
+                    </button>
+                </div>
+                <p class="credits-modal-subtitle">Credits never expire. 1 credit = 1 page.</p>
+                <div class="credits-plans">
+                    <div class="credits-plan" data-product="starter">
+                        <div class="plan-header">
+                            <span class="plan-name">Starter Pack</span>
+                            <span class="plan-price">$5</span>
+                        </div>
+                        <div class="plan-credits">50 credits</div>
+                        <div class="plan-note">One-time · never expires</div>
+                        <button class="btn btn-primary btn-full plan-buy-btn">Buy Now</button>
+                    </div>
+                    <div class="credits-plan plan-featured" data-product="pro">
+                        <div class="plan-badge">Best value</div>
+                        <div class="plan-header">
+                            <span class="plan-name">Pro</span>
+                            <span class="plan-price">$12<span class="plan-period">/mo</span></span>
+                        </div>
+                        <div class="plan-credits">500 credits/month</div>
+                        <div class="plan-note">Renews monthly · cancel anytime</div>
+                        <button class="btn btn-primary btn-full plan-buy-btn">Subscribe</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Auth Modal -->
         <div class="modal-backdrop hidden" id="authModalBackdrop">
             <div class="modal glass-card" id="authModal">

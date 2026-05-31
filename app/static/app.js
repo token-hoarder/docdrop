@@ -80,6 +80,42 @@ document.addEventListener("DOMContentLoaded", () => {
     // Notifications
     const toastContainer = document.getElementById("toastContainer");
 
+    // Credits modal
+    const creditsModalBackdrop = document.getElementById("creditsModalBackdrop");
+    const closeCreditsModal = document.getElementById("closeCreditsModal");
+
+    function openCreditsModal() {
+        creditsModalBackdrop.classList.remove("hidden");
+        lucide.createIcons();
+    }
+
+    function closeCreditsModalFn() {
+        creditsModalBackdrop.classList.add("hidden");
+    }
+
+    closeCreditsModal.addEventListener("click", closeCreditsModalFn);
+    creditsModalBackdrop.addEventListener("click", (e) => {
+        if (e.target === creditsModalBackdrop) closeCreditsModalFn();
+    });
+
+    creditsModalBackdrop.querySelectorAll(".credits-plan").forEach(plan => {
+        plan.querySelector(".plan-buy-btn").addEventListener("click", async () => {
+            if (!state.user) { openAuthModal(); return; }
+            const product = plan.dataset.product;
+            try {
+                const res = await fetchWithAuth("/api/checkout", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ product }),
+                });
+                const data = await res.json();
+                if (data.url) window.location.href = data.url;
+            } catch (err) {
+                showToast("Could not start checkout. Please try again.", "error");
+            }
+        });
+    });
+
     // Auth
     const signInBtn = document.getElementById("signInBtn");
     const signOutBtn = document.getElementById("signOutBtn");
@@ -196,6 +232,10 @@ document.addEventListener("DOMContentLoaded", () => {
     signOutBtn.addEventListener("click", async () => {
         await _supabase.auth.signOut();
         showToast("Signed out", "success");
+    });
+
+    creditBadge.addEventListener("click", () => {
+        if (state.user) openCreditsModal();
     });
 
     // Listen for auth state changes (login, logout, token refresh)
@@ -568,9 +608,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
             if (response.status === 402) {
                 setState({
-                    ocrSuggestion: `Not enough credits — need ${data.credits_required}, you have ${data.credits_available}. Top up to convert.`,
+                    ocrSuggestion: `Not enough credits — need ${data.credits_required}, you have ${data.credits_available}.`,
                     preflightData: data,
                 });
+                openCreditsModal();
                 return;
             }
 
@@ -801,6 +842,13 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             }, 300);
         }, 3500);
+    }
+
+    // Handle post-payment redirect
+    if (window.location.hash === "#success") {
+        showToast("Payment successful! Your credits have been added.", "success");
+        history.replaceState(null, "", "/");
+        setTimeout(() => { if (state.user) refreshCredits(); }, 2000);
     }
 
     // ----------------------------------------------------------------------

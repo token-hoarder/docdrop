@@ -242,6 +242,112 @@ def run_ocr(images, engine: str) -> str:
     return OCR_REGISTRY[engine].run(images)
 
 
+# ── Stripe ────────────────────────────────────────────────────────────────────
+
+import stripe as stripe_lib
+stripe_lib.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
+
+STRIPE_PRODUCTS = {
+    "starter": {"price_id": os.environ.get("STRIPE_PRICE_STARTER", ""), "credits": 50},
+    "pro":     {"price_id": os.environ.get("STRIPE_PRICE_PRO", ""),     "credits": 500},
+}
+
+
+@app.post("/api/checkout")
+async def create_checkout(
+    request: Request,
+    user=Depends(require_user),
+):
+    body = await request.json()
+    product = body.get("product")
+    if product not in STRIPE_PRODUCTS:
+        raise HTTPException(status_code=400, detail=f"Unknown product: {product}")
+
+    price_id = STRIPE_PRODUCTS[product]["price_id"]
+    is_subscription = product == "pro"
+
+    credits = STRIPE_PRODUCTS[product]["credits"]
+    meta = {"user_id": str(user.id), "product": product, "credits": str(credits)}
+
+    session = stripe_lib.checkout.Session.create(
+        mode="subscription" if is_subscription else "payment",
+        line_items=[{"price": price_id, "quantity": 1}],
+        success_url="http://localhost:8000/#success",
+        cancel_url="http://localhost:8000/#cancelled",
+        client_reference_id=str(user.id),
+        customer_email=user.email,
+        metadata=meta,
+        subscription_data={"metadata": meta} if is_subscription else None,
+    )
+
+    log.info("Checkout session created — user=%s product=%s session=%s", user.id, product, session.id)
+    return {"url": session.url}
+
+
+@app.post("/api/webhook")
+async def stripe_webhook(request: Request):
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+
+    try:
+        event = stripe_lib.Webhook.construct_event(
+            payload, sig, os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+        )
+    except stripe_lib.errors.SignatureVerificationError:
+        log.warning("Stripe webhook signature verification failed")
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+
+    if event["type"] == "checkout.session.completed":
+        session = event["data"]["object"]
+        meta = session.get("metadata") or {}
+        user_id = meta.get("user_id") or session.get("client_reference_id")
+        product = meta.get("product")
+        credits = int(meta.get("credits", 0))
+
+        if user_id and credits:
+            from app.db import _supabase
+            # Idempotency — skip if this Stripe event was already processed
+            existing = _supabase().table("ocr_transactions").select("id").eq(
+                "metadata->>stripe_event_id", event["id"]
+            ).execute()
+            if not existing.data:
+                _supabase().table("ocr_transactions").insert({
+                    "user_id": user_id,
+                    "delta": credits,
+                    "reason": "stripe_purchase" if product == "starter" else "stripe_subscription",
+                    "metadata": {"stripe_session_id": session.get("id"), "stripe_event_id": event["id"], "product": product},
+                }).execute()
+                log.info("Credits granted — user=%s product=%s credits=%d", user_id, product, credits)
+            else:
+                log.info("Duplicate webhook ignored — event=%s", event["id"])
+
+    elif event["type"] == "invoice.payment_succeeded":
+        # Subscription renewal — get metadata from subscription
+        invoice = event["data"]["object"]
+        subscription_id = invoice.get("subscription")
+        if subscription_id:
+            sub = stripe_lib.Subscription.retrieve(subscription_id)
+            meta = sub.get("metadata") or {}
+            user_id = meta.get("user_id")
+            product = meta.get("product")
+            credits = int(meta.get("credits", 0))
+            if user_id and credits and invoice.get("billing_reason") == "subscription_cycle":
+                from app.db import _supabase
+                existing = _supabase().table("ocr_transactions").select("id").eq(
+                    "metadata->>stripe_event_id", event["id"]
+                ).execute()
+                if not existing.data:
+                    _supabase().table("ocr_transactions").insert({
+                        "user_id": user_id,
+                        "delta": credits,
+                        "reason": "stripe_subscription",
+                        "metadata": {"stripe_invoice_id": invoice.get("id"), "stripe_event_id": event["id"], "product": product},
+                    }).execute()
+                    log.info("Subscription renewal credits — user=%s credits=%d", user_id, credits)
+
+    return {"received": True}
+
+
 # ── Credits ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/credits")
