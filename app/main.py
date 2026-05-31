@@ -33,7 +33,7 @@ except ImportError:
 
 from app.auth import get_current_user, require_user
 from app.db import log_conversion
-from app.credits import get_balance
+from app.credits import get_balance, debit
 
 IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.tiff', '.tif', '.bmp', '.gif'}
 MAX_FILE_SIZE_MB = 50
@@ -252,6 +252,61 @@ async def get_credits(user=Depends(require_user)):
     return {"balance": balance}
 
 
+# ── Preflight ─────────────────────────────────────────────────────────────────
+
+def count_pages(file_path: str, ext: str) -> int:
+    """Returns page count for billing purposes. Images are always 1."""
+    if ext in IMAGE_EXTENSIONS:
+        return 1
+    if ext == ".pdf":
+        try:
+            from pdfminer.pdfpage import PDFPage
+            with open(file_path, "rb") as f:
+                return sum(1 for _ in PDFPage.get_pages(f))
+        except Exception as exc:
+            log.warning("Page count failed (%s) — defaulting to 1", exc)
+            return 1
+    return 0
+
+
+@app.post("/api/preflight")
+async def preflight(
+    file: UploadFile = File(...),
+    user=Depends(get_current_user),
+):
+    """Returns page count, credit cost, and available balance before a conversion."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided.")
+
+    file_size = file.size or 0
+    if file_size > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail=f"File too large. Maximum is {MAX_FILE_SIZE_MB} MB.")
+
+    suffix = os.path.splitext(file.filename)[1].lower()
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        temp_file_path = tmp.name
+
+    try:
+        pages = count_pages(temp_file_path, suffix)
+        credits_available = get_balance(str(user.id)) if user else 0
+        log.info(
+            "Preflight — file=%r pages=%d credits_required=%d credits_available=%d user=%s",
+            file.filename, pages, pages, credits_available, user.id if user else "anonymous",
+        )
+        return {
+            "filename": file.filename,
+            "pages": pages,
+            "credits_required": pages,
+            "credits_available": credits_available,
+            "can_convert": credits_available >= pages,
+        }
+    finally:
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+
+
 # ── Format / engine probes ────────────────────────────────────────────────────
 
 @app.get("/api/formats")
@@ -352,9 +407,40 @@ async def convert_document(
         temp_file_path = tmp.name
 
     t_start = time.perf_counter()
+    page_count = None
     try:
+        # ── Credit gate ───────────────────────────────────────────────────────
+        if ocr_engine and ocr_engine != "none":
+            if not user:
+                raise HTTPException(status_code=401, detail="Sign in to use OCR.")
+
+            page_count = count_pages(temp_file_path, suffix)
+            balance = get_balance(user_id)
+
+            if balance < page_count:
+                return JSONResponse(status_code=402, content={
+                    "detail": f"Not enough credits — need {page_count}, you have {balance}.",
+                    "credits_required": page_count,
+                    "credits_available": balance,
+                })
+
+            log.info(
+                "Credit check passed — user=%s pages=%d balance=%d",
+                user_id, page_count, balance,
+            )
+
+        # ── Conversion ────────────────────────────────────────────────────────
         result = pipeline_convert(temp_file_path, suffix, ocr_engine)
         duration_ms = round((time.perf_counter() - t_start) * 1000)
+
+        # ── Debit credits (only after successful OCR) ─────────────────────────
+        if result.ocr_used and user_id:
+            new_balance = debit(
+                user_id,
+                page_count,
+                metadata={"filename": file.filename, "pages": page_count},
+            )
+            log.info("Credits debited — user=%s pages=%d new_balance=%d", user_id, page_count, new_balance)
 
         log_conversion(
             user_id=user_id,
@@ -363,7 +449,7 @@ async def convert_document(
             file_size_bytes=file_size,
             ocr_engine=ocr_engine,
             ocr_used=result.ocr_used,
-            page_count=None,
+            page_count=page_count,
             char_count=len(result.markdown),
             word_count=len(result.markdown.split()),
             duration_ms=duration_ms,

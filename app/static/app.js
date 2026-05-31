@@ -20,6 +20,7 @@ document.addEventListener("DOMContentLoaded", () => {
         currentFilename: "",
         conversionHistory: JSON.parse(localStorage.getItem("mid_history") || "[]"),
         user: null,
+        preflightData: null,
     };
 
     function setState(patch) {
@@ -198,8 +199,10 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // Listen for auth state changes (login, logout, token refresh)
+    let _authDebounce = null;
     _supabase.auth.onAuthStateChange((_event, session) => {
-        renderAuthState(session?.user ?? null);
+        clearTimeout(_authDebounce);
+        _authDebounce = setTimeout(() => renderAuthState(session?.user ?? null), 100);
     });
 
     // Restore session on page load
@@ -362,6 +365,37 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
+    async function runPreflight(engine) {
+        if (!state.selectedFile || engine === "none") return;
+
+        const ext = getFileExt(state.selectedFile.name);
+        const isOcrTarget = IMAGE_EXTS.has(ext) || ext === "pdf";
+        if (!isOcrTarget) return;
+
+        try {
+            const formData = new FormData();
+            formData.append("file", state.selectedFile);
+            const res = await fetchWithAuth("/api/preflight", { method: "POST", body: formData });
+            if (!res.ok) return;
+            const data = await res.json();
+
+            if (data.pages === 0) return;
+
+            let msg;
+            if (!state.user) {
+                msg = `Sign in to use OCR — this file is ${data.pages} page(s).`;
+            } else if (!data.can_convert) {
+                msg = `This file is ${data.pages} page(s) and costs ${data.credits_required} credit(s). You have ${data.credits_available} — top up to convert.`;
+            } else {
+                msg = `This file is ${data.pages} page(s) and will use ${data.credits_required} of your ${data.credits_available} credit(s).`;
+            }
+
+            setState({ ocrSuggestion: msg, preflightData: data });
+        } catch (_) {
+            // preflight failure is non-fatal — user can still try to convert
+        }
+    }
+
     ocrPills.addEventListener("click", (e) => {
         const pill = e.target.closest(".ocr-pill");
         if (!pill || pill.disabled) return;
@@ -377,6 +411,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         setState({ selectedOcrEngine: engine });
+        runPreflight(engine);
     });
 
     ocrConvertBtn.addEventListener("click", () => {
@@ -477,7 +512,7 @@ document.addEventListener("DOMContentLoaded", () => {
         e.preventDefault();
         e.stopPropagation();
         fileInput.value = "";
-        setState({ selectedFile: null, ocrSuggestion: null, selectedOcrEngine: "none" });
+        setState({ selectedFile: null, ocrSuggestion: null, selectedOcrEngine: "none", preflightData: null });
     });
 
     // ----------------------------------------------------------------------
@@ -530,6 +565,14 @@ document.addEventListener("DOMContentLoaded", () => {
             });
 
             const data = await response.json();
+
+            if (response.status === 402) {
+                setState({
+                    ocrSuggestion: `Not enough credits — need ${data.credits_required}, you have ${data.credits_available}. Top up to convert.`,
+                    preflightData: data,
+                });
+                return;
+            }
 
             if (!response.ok) {
                 throw new Error(data.detail || "Server conversion failed.");
